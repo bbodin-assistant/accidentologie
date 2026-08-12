@@ -7,8 +7,8 @@ on:
     paths:
       - "accidentologie/**"
       - "data/**/*.csv"
-      - "main.py"
       - "pyproject.toml"
+      - ".github/build_pages.py"
       - ".github/workflows/pages.yml"
 
 permissions:
@@ -71,7 +71,7 @@ jobs:
       - name: Générer la carte WebGL de la CARA
         env:
           MPLBACKEND: Agg
-        run: python main.py --build-github-pages --output-dir site
+        run: python .github/build_pages.py --output-dir site
 
       - name: Résumer le site
         run: |

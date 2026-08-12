@@ -18,5 +18,8 @@ dependencies = [
     "scipy>=1.11,<2.0",
 ]
 
+[project.optional-dependencies]
+notebook = ["jupyterlab>=4.0,<5.0"]
+
 [tool.setuptools.packages.find]
 include = ["accidentologie*"]

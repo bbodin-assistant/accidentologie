@@ -26,6 +26,8 @@ SEVERITY_COLORS = {
     "Indemne seulement": "#6BAED6",
     "Inconnue": "#999999",
 }
+MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+WEEKDAY_LABELS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 
 
 def _require_columns(dataframe: pd.DataFrame, columns: set[str]) -> None:
@@ -76,6 +78,196 @@ def plot_accident_per_year(
     ax.set_axisbelow(True)
     ax.legend(title="Gravité", frameon=False)
     ax.tick_params(axis="x", rotation=0)
+    return ax
+
+
+def _annotated_heatmap(
+    values: pd.DataFrame,
+    *,
+    ax: Any,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    cmap: str = "YlOrRd",
+) -> Any:
+    image = ax.imshow(values.to_numpy(), aspect="auto", cmap=cmap)
+    maximum = max(float(values.to_numpy().max()), 1.0)
+    for row in range(len(values.index)):
+        for column in range(len(values.columns)):
+            value = int(values.iloc[row, column])
+            ax.text(
+                column,
+                row,
+                str(value),
+                ha="center",
+                va="center",
+                fontsize=8,
+                color="white" if value > maximum * 0.55 else "#17324D",
+            )
+    ax.set_xticks(range(len(values.columns)), values.columns)
+    ax.set_yticks(range(len(values.index)), values.index)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.figure.colorbar(image, ax=ax, shrink=0.82, label="Nombre d'accidents")
+    return ax
+
+
+def plot_monthly_seasonality(
+    dataframe: pd.DataFrame,
+    *,
+    ax: Any | None = None,
+    title: str = "Saisonnalité mensuelle des accidents",
+) -> Any:
+    """Trace une matrice année × mois du nombre d'accidents."""
+    _require_columns(dataframe, {"accident_id", "year", "date"})
+    dated = dataframe[dataframe["date"].notna()].copy()
+    if dated.empty:
+        raise ValueError("Aucune date valide dans le DataFrame")
+    dated["month"] = dated["date"].dt.month
+    counts = dated.pivot_table(
+        index="year",
+        columns="month",
+        values="accident_id",
+        aggfunc="nunique",
+        fill_value=0,
+    ).reindex(columns=range(1, 13), fill_value=0)
+    counts.columns = MONTH_LABELS
+    if ax is None:
+        _, ax = plt.subplots(figsize=(11, 5.5))
+    return _annotated_heatmap(
+        counts,
+        ax=ax,
+        title=title,
+        xlabel="Mois",
+        ylabel="Année",
+    )
+
+
+def plot_weekday_hour_heatmap(
+    dataframe: pd.DataFrame,
+    *,
+    ax: Any | None = None,
+    title: str = "Accidents selon le jour et l'heure",
+) -> Any:
+    """Trace une matrice jour de semaine × heure du nombre d'accidents."""
+    _require_columns(dataframe, {"accident_id", "date", "time"})
+    timed = dataframe[dataframe["date"].notna() & dataframe["time"].notna()].copy()
+    timed["hour"] = pd.to_numeric(timed["time"].str[:2], errors="coerce")
+    timed = timed[timed["hour"].between(0, 23)]
+    if timed.empty:
+        raise ValueError("Aucune date/heure valide dans le DataFrame")
+    timed["weekday"] = timed["date"].dt.dayofweek
+    counts = timed.pivot_table(
+        index="weekday",
+        columns="hour",
+        values="accident_id",
+        aggfunc="nunique",
+        fill_value=0,
+    ).reindex(index=range(7), columns=range(24), fill_value=0)
+    counts.index = WEEKDAY_LABELS
+    counts.columns = [f"{hour:02d}h" for hour in range(24)]
+    if ax is None:
+        _, ax = plt.subplots(figsize=(14, 5.5))
+    result = _annotated_heatmap(
+        counts,
+        ax=ax,
+        title=title,
+        xlabel="Heure",
+        ylabel="Jour",
+        cmap="OrRd",
+    )
+    result.tick_params(axis="x", labelrotation=45)
+    return result
+
+
+def plot_victim_age_pyramid(
+    victims: pd.DataFrame,
+    *,
+    ax: Any | None = None,
+    title: str = "Âge et sexe des victimes blessées ou tuées",
+) -> Any:
+    """Trace une pyramide des âges des victimes, hommes à gauche et femmes à droite."""
+    _require_columns(victims, {"victim_id", "age", "sex", "severity_code"})
+    selected = victims[
+        victims["severity_code"].isin(["2", "3", "4"])
+        & victims["age"].notna()
+        & victims["sex"].isin(["Homme", "Femme"])
+    ].copy()
+    if selected.empty:
+        raise ValueError("Aucune victime avec âge et sexe renseignés")
+    edges = [0, 14, 18, 25, 35, 45, 55, 65, 75, 85, 111]
+    labels = ["0–13", "14–17", "18–24", "25–34", "35–44", "45–54", "55–64", "65–74", "75–84", "85+"]
+    selected["age_group"] = pd.cut(
+        selected["age"], bins=edges, labels=labels, right=False
+    )
+    counts = selected.pivot_table(
+        index="age_group",
+        columns="sex",
+        values="victim_id",
+        aggfunc="nunique",
+        fill_value=0,
+        observed=False,
+    ).reindex(labels, fill_value=0)
+    men = counts.get("Homme", pd.Series(0, index=counts.index))
+    women = counts.get("Femme", pd.Series(0, index=counts.index))
+    if ax is None:
+        _, ax = plt.subplots(figsize=(10, 6.5))
+    ax.barh(counts.index, -men, color="#315B78", label="Hommes")
+    ax.barh(counts.index, women, color="#E07A8D", label="Femmes")
+    ax.axvline(0, color="#66717A", linewidth=0.8)
+    ax.set_title(title)
+    ax.set_xlabel("Nombre de victimes")
+    ax.set_ylabel("Tranche d'âge")
+    limit = max(int(men.max()), int(women.max()), 1)
+    ticks = ax.get_xticks()
+    ax.set_xticks(ticks, [str(abs(int(value))) for value in ticks])
+    ax.set_xlim(-limit * 1.25, limit * 1.25)
+    ax.grid(axis="x", alpha=0.25)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False)
+    return ax
+
+
+def plot_mobility_severity(
+    victims: pd.DataFrame,
+    *,
+    ax: Any | None = None,
+    min_victims: int = 10,
+    title: str = "Gravité observée selon le mode de déplacement",
+) -> Any:
+    """Compare la part hospitalisée ou tuée par mobilité parmi les victimes blessées."""
+    _require_columns(victims, {"victim_id", "mobility", "severity_code"})
+    selected = victims[victims["severity_code"].isin(["2", "3", "4"])].copy()
+    summary = selected.groupby("mobility", as_index=False).agg(
+        victims=("victim_id", "nunique"),
+        serious_or_killed=(
+            "severity_code", lambda values: values.isin(["2", "3"]).sum()
+        ),
+    )
+    summary = summary[summary["victims"].ge(min_victims)].copy()
+    if summary.empty:
+        raise ValueError(f"Aucun mode ne compte au moins {min_victims} victimes")
+    summary["rate"] = summary["serious_or_killed"] / summary["victims"] * 100
+    summary = summary.sort_values("rate")
+    if ax is None:
+        _, ax = plt.subplots(figsize=(11, 6.5))
+    bars = ax.barh(summary["mobility"], summary["rate"], color="#F28C00")
+    ax.bar_label(
+        bars,
+        labels=[
+            f"{rate:.1f} % — {count} victimes"
+            for rate, count in zip(summary["rate"], summary["victims"])
+        ],
+        padding=3,
+        fontsize=8,
+    )
+    ax.set_xlim(0, min(100, summary["rate"].max() + 25))
+    ax.set_title(title)
+    ax.set_xlabel("Part des victimes hospitalisées ou tuées")
+    ax.set_ylabel("Mode de déplacement")
+    ax.grid(axis="x", alpha=0.25)
+    ax.set_axisbelow(True)
     return ax
 
 
@@ -367,6 +559,9 @@ def plot_severity_map(
         zoom_start=10,
         tiles=tiles,
         control_scale=True,
+        fade_animation=False,
+        zoom_animation=False,
+        marker_zoom_animation=False,
     )
     layer: Any
     if cluster:

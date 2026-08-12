@@ -21,17 +21,3 @@ class Territory:
             raise ValueError("Un territoire doit contenir au moins une commune")
         object.__setattr__(self, "name", name.strip())
         object.__setattr__(self, "communes", normalized)
-
-
-CARA = Territory(
-    "Communauté d'agglomération Royan Atlantique (CARA)",
-    (
-        "17015", "17021", "17034", "17060", "17064", "17068", "17079",
-        "17098", "17119", "17131", "17152", "17155", "17160", "17183",
-        "17151", "17452", "17097", "17225", "17228", "17230", "17247",
-        "17248", "17306", "17307", "17311", "17333", "17380", "17393",
-        "17409", "17421", "17425", "17437", "17461",
-    ),
-)
-
-ROYAN = Territory("Royan", ("17306",))

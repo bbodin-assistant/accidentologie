@@ -10,9 +10,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 from accidentologie import (
-    CARA,
     Territory,
-    build_web_map,
     cluster_victims,
     download_csv_files,
     export_csv,
@@ -32,6 +30,18 @@ from accidentologie import (
 )
 
 
+DEFAULT_TERRITORY = Territory(
+    "Communauté d'agglomération Royan Atlantique (CARA)",
+    (
+        "17015", "17021", "17034", "17060", "17064", "17068", "17079",
+        "17098", "17119", "17131", "17152", "17155", "17160", "17183",
+        "17151", "17452", "17097", "17225", "17228", "17230", "17247",
+        "17248", "17306", "17307", "17311", "17333", "17380", "17393",
+        "17409", "17421", "17425", "17437", "17461",
+    ),
+)
+
+
 def slugify(value: str) -> str:
     normalized = value.casefold().replace("é", "e").replace("è", "e").replace("à", "a")
     return re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
@@ -46,13 +56,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--territory-name",
-        default=CARA.name,
+        default=DEFAULT_TERRITORY.name,
         help="nom affiché dans les graphiques et le rapport",
     )
     parser.add_argument(
         "--communes",
         nargs="+",
-        default=list(CARA.communes),
+        default=list(DEFAULT_TERRITORY.communes),
         metavar="CODE_INSEE",
         help="codes INSEE communaux (défaut : communes de la CARA)",
     )
@@ -86,11 +96,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="années du graphique des tués (défaut : deux dernières années analysées)",
     )
-    parser.add_argument(
-        "--build-github-pages",
-        action="store_true",
-        help="générer uniquement la carte WebGL 2005–2024 de la CARA",
-    )
     return parser.parse_args()
 
 
@@ -98,16 +103,6 @@ def main() -> int:
     args = parse_args()
     territory = Territory(args.territory_name, args.communes)
     years = sorted(set(args.years))
-    if args.build_github_pages:
-        site = build_web_map(
-            years=years,
-            communes=CARA.communes,
-            data_dir=args.data_dir,
-            output_dir=args.output_dir,
-            title=f"Accidents corporels dans la {CARA.name}",
-        )
-        print(f"Carte GitHub Pages de la CARA : {site.resolve()}")
-        return 0
     slug = slugify(territory.name)
     result_dir = args.output_dir / slug
     csv_dir = result_dir / "csv"

@@ -18,7 +18,7 @@ choisies peuvent être assemblées dans un rapport PDF.
 Le projet nécessite Python 3.10 ou une version plus récente.
 
 ```bash
-git clone <URL_DU_DEPOT>
+git clone https://github.com/bbodin/accidentologie.git
 cd accidentologie
 python -m venv .venv
 source .venv/bin/activate
@@ -48,6 +48,35 @@ carte = plot_severity_map(accidents, output="carte.html")
 Les communes sont identifiées par leur code INSEE à cinq caractères, et non par leur
 code postal.
 
+![Accidents dans la CARA par année et gravité entre 2020 et 2024](docs/images/cara-accidents-par-annee.png)
+
+*Nombre d'accidents par gravité dans la CARA, de 2020 à 2024.*
+
+## Notebook de démonstration
+
+Le notebook [`notebooks/accidentologie_demo.ipynb`](notebooks/accidentologie_demo.ipynb)
+analyse la CARA de 2020 à 2024. Il présente le chargement des accidents et des usagers,
+les agrégations avec Pandas et les visualisations suivantes :
+
+- l'évolution mensuelle des accidents par gravité ;
+- une heatmap de saisonnalité année × mois ;
+- une heatmap jour de semaine × heure ;
+- une pyramide des âges des victimes ;
+- la part hospitalisée ou tuée selon le mode de déplacement.
+
+![Saisonnalité mensuelle des accidents dans la CARA](docs/images/cara-saisonnalite.png)
+
+*Nombre d'accidents par mois dans la CARA, de 2020 à 2024.*
+
+Pour l'ouvrir :
+
+```bash
+python -m pip install -e ".[notebook]"
+jupyter lab notebooks/accidentologie_demo.ipynb
+```
+
+La carte Folium est enregistrée dans `notebooks/outputs/`.
+
 ## Organisation
 
 ```text
@@ -59,13 +88,12 @@ accidentologie/
 ├── clustering.py     # profils de victimes
 ├── plots.py          # graphiques et cartes
 ├── report.py         # assemblage PDF
-└── territories.py    # territoires réutilisables
-main.py               # exemple/CLI utilisant uniquement l'interface publique
+└── territories.py    # type générique de territoire
+main.py               # génération des exports et du rapport
 ```
 
-Toute la logique métier se trouve dans le paquet `accidentologie`. Le fichier
-`main.py` est volontairement un orchestrateur mince : il montre comment appeler les
-fonctions une par une pour créer des CSV, des images, une carte HTML et un PDF.
+`main.py` fournit une interface en ligne de commande pour créer les CSV, les images,
+la carte HTML et le rapport PDF d'un territoire.
 
 ## Télécharger les CSV BAAC
 
@@ -91,7 +119,7 @@ download_csv_files(years=2024, force=True)
 download_csv_files(years=2024, progress=None)
 ```
 
-Depuis l'exemple en ligne de commande :
+Avec l'interface en ligne de commande :
 
 ```bash
 python main.py --download
@@ -110,17 +138,9 @@ secteur_royan = Territory(
 )
 ```
 
-Deux territoires sont fournis comme exemples :
-
-```python
-from accidentologie import CARA, ROYAN
-
-print(ROYAN.name, ROYAN.communes)
-print(CARA.name, len(CARA.communes))
-```
-
-La classe est pratique pour une interface utilisateur, mais les fonctions acceptent
-aussi directement une chaîne ou une liste de codes.
+La propriété `secteur_royan.communes` peut ensuite être transmise aux fonctions de
+chargement. Le paramètre `communes` accepte également un code INSEE isolé ou une
+liste de codes.
 
 ## Charger les accidents
 
@@ -234,13 +254,19 @@ from accidentologie import plot_severity_map
 carte = plot_severity_map(
     accidents,
     output="carte_interactive.html",
-    cluster=True,
+    cluster=False,
 )
 ```
 
 La fonction retourne un objet `folium.Map`. Les accidents mortels sont des étoiles
 rouges, les graves non mortels des losanges orange et les légers des ronds jaunes.
-La limite par défaut est de 20 000 points pour éviter un HTML accidentellement énorme.
+La limite par défaut de 20 000 points peut être modifiée avec `max_points`.
+Avec `cluster=False`, chaque accident est affiché séparément ; `cluster=True` regroupe
+les marqueurs proches.
+
+![Carte des accidents géolocalisés dans la CARA](docs/images/cara-carte-geographique.png)
+
+*Accidents géolocalisés dans la CARA, de 2020 à 2024.*
 
 ## Clustering des profils de victimes
 
@@ -269,7 +295,7 @@ Le clustering utilise une distance de Gower et une classification hiérarchique 
 lien complet. Il compare par défaut 2 à 20 groupes et écarte les solutions contenant
 des microgroupes ou insuffisamment stables.
 
-## Composer un rapport à partir des graphiques choisis
+## Générer un rapport PDF
 
 ```python
 from accidentologie import save_pdf_report
@@ -289,15 +315,14 @@ save_pdf_report(
 )
 ```
 
-L'ordre de la liste est l'ordre des pages. Une application peut donc proposer des
-cases à cocher et composer seulement les pages demandées.
+L'ordre des figures dans la liste détermine l'ordre des pages du rapport.
 
 ## Utiliser `main.py`
 
 ### Générer le rapport PDF de la CARA
 
-La CARA est le territoire utilisé par défaut dans `main.py`. Pour télécharger les
-données manquantes, produire tous les CSV et graphiques, puis générer le rapport :
+`main.py` utilise par défaut les 33 communes de la CARA. Pour télécharger les données
+manquantes, produire tous les CSV et graphiques, puis générer le rapport :
 
 ```bash
 python main.py --download
@@ -327,12 +352,11 @@ python main.py \
   --fatality-years 2023 2024
 ```
 
-Le même rapport peut être construit directement avec l'API Python. Chaque page est
-d'abord générée séparément, puis transmise à `save_pdf_report` dans l'ordre souhaité :
+Le rapport peut aussi être construit avec l'API Python :
 
 ```python
 from accidentologie import (
-    CARA,
+    Territory,
     cluster_victims,
     get_dataframe,
     get_fatalities_by_user_type,
@@ -347,9 +371,19 @@ from accidentologie import (
     save_pdf_report,
 )
 
+cara = Territory(
+    "Communauté d'agglomération Royan Atlantique (CARA)",
+    [
+        "17015", "17021", "17034", "17060", "17064", "17068", "17079",
+        "17098", "17119", "17131", "17152", "17155", "17160", "17183",
+        "17151", "17452", "17097", "17225", "17228", "17230", "17247",
+        "17248", "17306", "17307", "17311", "17333", "17380", "17393",
+        "17409", "17421", "17425", "17437", "17461",
+    ],
+)
 years = range(2005, 2025)
-accidents = get_dataframe(years=years, communes=CARA.communes)
-usagers = get_victim_dataframe(years=years, communes=CARA.communes)
+accidents = get_dataframe(years=years, communes=cara.communes)
+usagers = get_victim_dataframe(years=years, communes=cara.communes)
 
 vehicules = get_vehicle_severity_table(accidents)
 tues = get_fatalities_by_user_type(usagers, years=[2023, 2024])
@@ -358,34 +392,34 @@ clusters = cluster_victims(usagers)
 figures = [
     plot_accident_per_year(
         accidents,
-        title=f"Accidents par année et gravité — {CARA.name}",
+        title=f"Accidents par année et gravité — {cara.name}",
     ).figure,
     plot_vehicle_severity_table(
         vehicules,
-        title=f"Accidents par véhicule et gravité — {CARA.name}",
+        title=f"Accidents par véhicule et gravité — {cara.name}",
     ).figure,
     plot_fatalities_by_user_type(
         tues,
-        title=f"Personnes tuées par type d'usager — {CARA.name}",
+        title=f"Personnes tuées par type d'usager — {cara.name}",
     ).figure,
     plot_severity_map_static(
         accidents,
-        title=f"Accidents géolocalisés — {CARA.name}",
+        title=f"Accidents géolocalisés — {cara.name}",
     ).figure,
     plot_cluster_profiles(
         clusters.profiles,
-        title=f"Profils de victimes — {CARA.name}",
+        title=f"Profils de victimes — {cara.name}",
     ).figure,
     plot_clustering_diagnostic(
         clusters.diagnostics,
-        title=f"Choix du nombre de profils — {CARA.name}",
+        title=f"Choix du nombre de profils — {cara.name}",
     ).figure,
 ]
 
 save_pdf_report(
     figures,
     "rapport_cara.pdf",
-    title=f"Rapport d'accidentologie — {CARA.name}",
+    title=f"Rapport d'accidentologie — {cara.name}",
 )
 ```
 
@@ -430,9 +464,7 @@ Pour un petit territoire où le clustering serait peu pertinent :
 python main.py --territory-name "Royan" --communes 17306 --skip-clustering
 ```
 
-## Intégration dans une interface web
-
-Les fonctions ne dépendent ni du terminal ni de `main.py` :
+## Utilisation dans une application web
 
 - `download_csv_files(..., progress=None)` convient à une tâche d'arrière-plan ;
 - les DataFrames peuvent être sérialisés en CSV avec `export_csv` ou directement en
@@ -441,7 +473,7 @@ Les fonctions ne dépendent ni du terminal ni de `main.py` :
 - `plot_severity_map` retourne le HTML Folium via `carte.get_root().render()` ;
 - `save_pdf_report` accepte n'importe quelle sélection de figures.
 
-Exemple de graphique en mémoire :
+Graphique en mémoire :
 
 ```python
 from io import BytesIO
@@ -462,91 +494,9 @@ buffer.seek(0)
 - Sans population exposée, trafic ou kilométrage parcouru, les résultats décrivent
   les accidents observés et non un risque individuel absolu.
 
-## Source et licences
+## Source et licence
 
 Données : Ministère de l'Intérieur — bases annuelles BAAC publiées sur
 [data.gouv.fr](https://www.data.gouv.fr/datasets/bases-de-donnees-annuelles-des-accidents-corporels-de-la-circulation-routiere-annees-de-2005-a-2024).
 
-Conservez l'attribution de la source et vérifiez la licence affichée sur la fiche
-data.gouv.fr avant republication. Le code du projet est sous licence MIT.
-
-## Publier la carte de la CARA sur GitHub Pages
-
-Les 80 CSV BAAC du dossier `data/` sont suivis avec Git LFS. Le site publié ne
-contient pas ces sources : l'Action les utilise pour construire un HTML WebGL et un
-fichier compact de points par année.
-
-### Préparer et pousser les données LFS
-
-Git LFS doit être installé localement avant le premier push :
-
-```bash
-git lfs install
-git lfs ls-files
-```
-
-`git lfs ls-files` doit afficher les 80 CSV. Le premier push envoie environ 439 Mio
-vers le stockage LFS du propriétaire du dépôt :
-
-```bash
-git push -u origin main
-```
-
-Les fichiers publiés par le site excluent les adresses et les caractéristiques des
-usagers. Chaque point contient uniquement les coordonnées, la gravité, le code INSEE,
-la date et l'identifiant BAAC de l'accident.
-
-### Fonctionnement de l'Action
-
-Le workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) :
-
-1. récupère les pointeurs Git sans télécharger les objets LFS ;
-2. restaure le dossier `data/` depuis le cache GitHub Actions ;
-3. appelle `git lfs pull` uniquement si ce cache est absent ; les fichiers `lieux`,
-   inutiles à cette carte, restent alors de simples pointeurs ;
-4. filtre les 33 communes de la CARA et génère leur carte pour 2005–2024 ;
-5. déploie uniquement le dossier `site/` comme artifact GitHub Pages.
-
-La clé du cache dépend des pointeurs LFS. Une modification du README ne déclenche pas
-de reconstruction, et une modification du code réutilise les CSV déjà mis en cache.
-
-Le premier build récupère depuis LFS les tables `caracteristiques`, `usagers` et
-`vehicules`. Les builds suivants restaurent le cache tant qu'il n'a pas expiré ou été
-évincé. Même sans cache, les données viennent de LFS et ne sont jamais retéléchargées
-depuis data.gouv.fr.
-
-### Activer Pages
-
-Après le premier push :
-
-1. ouvrir **Settings → Pages** dans le dépôt GitHub ;
-2. choisir **GitHub Actions** comme source de publication ;
-3. ouvrir l'onglet **Actions** et lancer manuellement
-   **Carte CARA GitHub Pages** si le push ne l'a pas déjà déclenchée.
-
-Le workflow ne s'exécute automatiquement que lorsque `main`, le générateur, les CSV
-LFS ou le workflow changent. Il peut toujours être relancé avec `workflow_dispatch`.
-
-### Tester le site localement
-
-Pour construire seulement deux années :
-
-```bash
-python main.py \
-  --build-github-pages \
-  --years 2023 2024 \
-  --output-dir site
-
-python -m http.server 8000 --directory site
-```
-
-Ouvrir ensuite <http://localhost:8000>. Pour reproduire exactement le build Pages sur
-les vingt années :
-
-```bash
-python main.py --build-github-pages --output-dir site
-```
-
-La carte charge progressivement un fichier par année et utilise deck.gl/WebGL pour
-afficher les points. Les filtres permettent de masquer des années ou des niveaux de
-gravité sans régénérer le site.
+Le code du projet est sous licence MIT.

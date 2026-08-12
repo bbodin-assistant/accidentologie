@@ -1,4 +1,4 @@
-"""Génération d'une carte WebGL statique adaptée à GitHub Pages."""
+"""Génération d'un site cartographique WebGL statique."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def build_web_map(
     output_dir: str | Path = "site",
     title: str = "Carte des accidents corporels",
 ) -> Path:
-    """Construit un site statique WebGL et retourne le chemin de ``index.html``.
+    """Construit un site cartographique WebGL et retourne son fichier ``index.html``.
 
     Les points sont répartis dans un JSON compact par année. Seules les données
     nécessaires à la carte sont publiées : longitude, latitude, gravité, code INSEE,
