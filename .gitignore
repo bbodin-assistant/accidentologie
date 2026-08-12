@@ -1,0 +1,15 @@
+.venv/
+.idea/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+
+# Les CSV BAAC sont versionnés avec Git LFS. Les sorties restent locales.
+prepared_data/
+reports/
+outputs/
+site/
