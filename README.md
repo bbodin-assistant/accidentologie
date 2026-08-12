@@ -1,274 +1,211 @@
 # Accidentologie
 
-Bibliothèque Python pour télécharger, filtrer, analyser et visualiser les bases
-annuelles des accidents corporels de la circulation routière (BAAC).
+Bibliothèque Python pour télécharger, normaliser, analyser et visualiser les
+bases annuelles des accidents corporels de la circulation routière (BAAC).
 
-L'interface est conçue autour de trois principes :
-
-1. une ligne par accident dans le DataFrame principal ;
-2. des fonctions d'analyse qui retournent des DataFrames réutilisables ;
-3. des fonctions de rendu indépendantes qui retournent une figure Matplotlib ou une
-   carte Folium.
-
-Ainsi, chaque CSV et chaque graphique peut être produit séparément, puis les figures
-choisies peuvent être assemblées dans un rapport PDF.
+L'API sépare les données, les agrégations et les rendus : les tableaux sont des
+`pandas.DataFrame`, les graphiques retournent des axes Matplotlib et les cartes
+interactives des objets Folium ou un site WebGL statique.
 
 ## Installation
 
-Le projet nécessite Python 3.10 ou une version plus récente.
+Le projet requiert Python 3.10 ou une version plus récente.
 
 ```bash
 git clone https://github.com/bbodin/accidentologie.git
 cd accidentologie
+git lfs pull
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 ```
 
-## Exemple rapide
-
-```python
-from accidentologie import (
-    get_dataframe,
-    plot_accident_per_year,
-    plot_severity_map,
-)
-
-accidents = get_dataframe(
-    years=[2022, 2023, 2024],
-    communes=["17015", "17021", "17306"],
-)
-
-ax = plot_accident_per_year(accidents)
-ax.figure.savefig("accidents_par_annee.png", dpi=180, bbox_inches="tight")
-
-carte = plot_severity_map(accidents, output="carte.html")
-```
-
-Les communes sont identifiées par leur code INSEE à cinq caractères, et non par leur
-code postal.
-
-![Accidents dans la CARA par année et gravité entre 2020 et 2024](docs/images/cara-accidents-par-annee.png)
-
-*Nombre d'accidents par gravité dans la CARA, de 2020 à 2024.*
-
-## Notebook de démonstration
-
-Le notebook [`notebooks/accidentologie_demo.ipynb`](notebooks/accidentologie_demo.ipynb)
-analyse la CARA de 2020 à 2024. Il présente le chargement des accidents et des usagers,
-les agrégations avec Pandas et les visualisations suivantes :
-
-- l'évolution mensuelle des accidents par gravité ;
-- une heatmap de saisonnalité année × mois ;
-- une heatmap jour de semaine × heure ;
-- une pyramide des âges des victimes ;
-- la part hospitalisée ou tuée selon le mode de déplacement.
-
-![Saisonnalité mensuelle des accidents dans la CARA](docs/images/cara-saisonnalite.png)
-
-*Nombre d'accidents par mois dans la CARA, de 2020 à 2024.*
-
-Pour l'ouvrir :
+Pour exécuter le notebook :
 
 ```bash
 python -m pip install -e ".[notebook]"
-jupyter lab notebooks/accidentologie_demo.ipynb
 ```
 
-La carte Folium est enregistrée dans `notebooks/outputs/`.
+## Télécharger les données BAAC
 
-## Organisation
-
-```text
-accidentologie/
-├── __init__.py       # interface publique
-├── download.py       # téléchargement data.gouv.fr
-├── data.py           # DataFrame canonique des accidents
-├── analysis.py       # tableaux et DataFrame des usagers
-├── clustering.py     # profils de victimes
-├── plots.py          # graphiques et cartes
-├── report.py         # assemblage PDF
-└── territories.py    # type générique de territoire
-main.py               # génération des exports et du rapport
-```
-
-`main.py` fournit une interface en ligne de commande pour créer les CSV, les images,
-la carte HTML et le rapport PDF d'un territoire.
-
-## Télécharger les CSV BAAC
+Sans argument `years`, la fonction découvre les années proposées par la source.
+Les quatre tables officielles sont téléchargées par défaut.
 
 ```python
 from accidentologie import download_csv_files
 
-downloaded = download_csv_files(
-    years=[2022, 2023, 2024],
-    data_dir="data",
-)
-
-print(f"{len(downloaded)} fichiers téléchargés")
+download_csv_files(years=[2022, 2023, 2024], data_dir="data")
+download_csv_files(years=None, data_dir="data")
 ```
 
-Chaque année contient les quatre tables officielles : `caracteristiques`, `lieux`,
-`vehicules` et `usagers`. Les fichiers déjà présents ne sont pas retéléchargés.
+Les analyses de la bibliothèque utilisent seulement `caracteristiques`, `vehicules`
+et `usagers`. Pour ne récupérer que ces tables :
 
 ```python
-# Retéléchargement explicite
-download_csv_files(years=2024, force=True)
+from accidentologie import ANALYSIS_TABLES, download_csv_files
 
-# Sans affichage de progression, par exemple dans une application web
-download_csv_files(years=2024, progress=None)
+download_csv_files(years=2024, tables=ANALYSIS_TABLES)
 ```
 
-Avec l'interface en ligne de commande :
-
-```bash
-python main.py --download
-```
-
-## Définir un territoire
-
-Un territoire est simplement un nom et une liste de codes INSEE communaux.
-
-```python
-from accidentologie import Territory
-
-secteur_royan = Territory(
-    "Royan et communes voisines",
-    ["17306", "17333", "17380", "17461"],
-)
-```
-
-La propriété `secteur_royan.communes` peut ensuite être transmise aux fonctions de
-chargement. Le paramètre `communes` accepte également un code INSEE isolé ou une
-liste de codes.
+`force=True` remplace les fichiers existants et `progress=None` désactive l'affichage
+de la progression.
 
 ## Charger les accidents
 
-`get_dataframe` retourne une ligne par accident et filtre les fichiers pendant leur
-lecture afin de limiter la mémoire utilisée.
+`get_dataframe` retourne une ligne par accident. `years=None` sélectionne toutes les
+années présentes localement et `communes=None` toute la France.
 
 ```python
 from accidentologie import get_dataframe
 
 accidents = get_dataframe(
-    years=range(2020, 2025),
-    communes=["17306", "17333", "17380", "17461"],
+    years=[2022, 2023, 2024],
+    communes=["75101", "75102"],
     data_dir="data",
 )
+
+france_2024 = get_dataframe(years=2024, communes=None)
 ```
 
-Passer `None` sélectionne toutes les années présentes ou toute la France :
-
-```python
-france = get_dataframe(years=2024, communes=None)
-toutes_les_annees = get_dataframe(years=None, communes="17306")
-```
+Les communes sont identifiées par leur code INSEE à cinq caractères, et non par
+leur code postal.
 
 ### Colonnes principales
 
 | Colonne | Description |
 |---|---|
-| `accident_id` | identifiant BAAC unique |
-| `year`, `date`, `time` | date et heure normalisées |
+| `accident_id` | identifiant BAAC de l'accident |
+| `year`, `date`, `time` | année, date et heure normalisées |
 | `department_code`, `commune_code` | codes géographiques |
-| `address` | adresse déclarée |
-| `latitude`, `longitude`, `has_coordinates` | géolocalisation disponible |
-| `severity_code`, `severity` | conséquence la plus grave de l'accident |
-| `number_killed` | personnes tuées |
-| `number_hospitalized` | blessés hospitalisés |
-| `number_slightly_injured` | blessés légers |
+| `address` | adresse déclarée dans le BAAC |
+| `latitude`, `longitude`, `has_coordinates` | géolocalisation |
+| `severity_code`, `severity` | conséquence la plus grave parmi les usagers |
+| `number_killed`, `number_hospitalized` | nombre de personnes tuées ou hospitalisées |
 | `number_users`, `number_vehicles` | usagers et véhicules enregistrés |
-| `vehicle_codes`, `vehicle_types` | catégories de véhicules impliquées |
+| `vehicle_codes`, `vehicle_types` | types distincts de véhicules impliqués |
 
-La gravité est exclusive : un accident mortel n'est pas également compté comme grave
-ou léger. Les codes communaux de l'ancien schéma 2005–2018 sont normalisés au format
-INSEE à cinq caractères.
+La gravité de l'accident est exclusive : un accident mortel n'est pas également
+compté dans la catégorie « Blessé hospitalisé ». La collecte de cette dernière
+catégorie connaît une rupture méthodologique à partir de 2018 ; elle n'est plus
+labellisée officiellement depuis 2019. Le graphique annuel
+matérialise automatiquement cette rupture lorsque la période l'encadre.
 
-## Produire les tableaux CSV
+## Définir un territoire
 
-Les fonctions d'analyse retournent des DataFrames ordinaires.
+```python
+from accidentologie import Territory
+
+territoire = Territory(
+    "Paris Centre",
+    ["75101", "75102", "75103", "75104"],
+)
+
+accidents = get_dataframe(years=2024, communes=territoire.communes)
+```
+
+Un territoire peut aussi être chargé depuis un GeoJSON dont les entités possèdent
+une propriété `code` :
+
+```python
+territoire = Territory.from_geojson(
+    "territoire.geojson",
+    name="Mon territoire",
+)
+```
+
+## Produire les tableaux
 
 ```python
 from accidentologie import (
     export_csv,
     get_accidents_per_year,
+    get_fatalities_by_user_type,
     get_vehicle_severity_table,
     get_victim_dataframe,
-    get_fatalities_by_user_type,
 )
 
 par_annee = get_accidents_per_year(accidents)
 par_vehicule = get_vehicle_severity_table(accidents)
-
-usagers = get_victim_dataframe(
+victimes = get_victim_dataframe(
     years=[2022, 2023, 2024],
-    communes=["17306", "17333", "17380", "17461"],
+    communes=territoire.communes,
 )
-tues = get_fatalities_by_user_type(usagers)
+tues = get_fatalities_by_user_type(victimes)
 
-export_csv(accidents, "exports/accidents.csv")
 export_csv(par_annee, "exports/accidents_par_annee.csv")
 export_csv(par_vehicule, "exports/accidents_par_vehicule.csv")
-export_csv(usagers, "exports/usagers.csv")
-export_csv(tues, "exports/tues_par_type_usager.csv")
+export_csv(victimes, "exports/victimes.csv")
+export_csv(tues, "exports/personnes_tuees.csv")
 ```
 
-`get_vehicle_severity_table` compte un accident une fois pour chaque type de véhicule
-distinct impliqué. Le total par véhicule n'est donc pas nécessairement le nombre
-d'accidents uniques.
+Un accident multivéhicule apparaît une fois pour chaque type distinct dans le
+tableau par véhicule. La somme de ce tableau n'est donc pas un nombre d'accidents
+uniques.
 
-## Générer les graphiques individuellement
-
-Chaque fonction retourne un axe Matplotlib. Sa figure peut être affichée dans un
-notebook, enregistrée ou insérée dans une interface.
+## Générer les graphiques
 
 ```python
 from accidentologie import (
     plot_accident_per_year,
-    plot_vehicle_severity_table,
-    plot_fatalities_by_user_type,
+    plot_monthly_seasonality,
     plot_severity_map_static,
+    plot_vehicle_severity_table,
 )
 
-ax_year = plot_accident_per_year(
-    accidents,
-    title="Accidents — Royan et communes voisines",
-)
-ax_year.figure.savefig("plots/par_annee.png", dpi=180, bbox_inches="tight")
+ax = plot_accident_per_year(accidents)
+ax.figure.savefig("accidents_par_annee.png", dpi=180, bbox_inches="tight")
 
-ax_vehicle = plot_vehicle_severity_table(par_vehicule)
-ax_vehicle.figure.savefig("plots/par_vehicule.png", dpi=180, bbox_inches="tight")
+ax = plot_vehicle_severity_table(par_vehicule)
+ax.figure.savefig("accidents_par_vehicule.png", dpi=180, bbox_inches="tight")
 
-if not tues.empty:
-    ax_fatalities = plot_fatalities_by_user_type(tues)
+ax = plot_monthly_seasonality(accidents)
 
-ax_map = plot_severity_map_static(accidents)
-ax_map.figure.savefig("plots/carte.png", dpi=180, bbox_inches="tight")
+ax = plot_severity_map_static(accidents)
+ax.figure.savefig("carte_statique.png", dpi=180, bbox_inches="tight")
 ```
 
-## Générer la carte interactive
+La carte statique charge un fond CartoDB via Contextily et masque les axes. Pour un
+rendu hors ligne, utiliser `plot_severity_map_static(accidents, basemap=False)`.
+
+## Générer les cartes interactives
+
+### Carte Folium
 
 ```python
 from accidentologie import plot_severity_map
 
 carte = plot_severity_map(
     accidents,
-    output="carte_interactive.html",
-    cluster=False,
+    output="carte.html",
+    cluster=True,
 )
 ```
 
-La fonction retourne un objet `folium.Map`. Les accidents mortels sont des étoiles
-rouges, les graves non mortels des losanges orange et les légers des ronds jaunes.
-La limite par défaut de 20 000 points peut être modifiée avec `max_points`.
-Avec `cluster=False`, chaque accident est affiché séparément ; `cluster=True` regroupe
-les marqueurs proches.
+La légende distingue les accidents mortels, avec blessé hospitalisé, légers,
+indemnes et de gravité inconnue. `max_points` limite explicitement la taille du HTML.
+Pour un fournisseur de tuiles personnalisé, utiliser `tiles=...` et `attr=...`.
 
-![Carte des accidents géolocalisés dans la CARA](docs/images/cara-carte-geographique.png)
+### Site WebGL statique
 
-*Accidents géolocalisés dans la CARA, de 2020 à 2024.*
+Pour une sélection plus volumineuse, `build_web_map` produit un fichier JSON par
+année et une carte Deck.gl. Les années locales et la vue initiale sont calculées
+automatiquement.
 
-## Clustering des profils de victimes
+```python
+from accidentologie import build_web_map
+
+index = build_web_map(
+    years=None,
+    communes=territoire.communes,
+    data_dir="data",
+    output_dir="site",
+    title=f"Accidents corporels — {territoire.name}",
+)
+```
+
+`basemap_url` et `basemap_attribution` permettent de remplacer le fond CartoDB.
+
+## Profils observés parmi les victimes
 
 ```python
 from accidentologie import (
@@ -277,226 +214,142 @@ from accidentologie import (
     plot_clustering_diagnostic,
 )
 
-result = cluster_victims(usagers)
-
-print(result.selected_clusters)
-print(result.profiles)
-print(result.diagnostics)
-
-ax_profiles = plot_cluster_profiles(result.profiles)
-ax_diagnostic = plot_clustering_diagnostic(result.diagnostics)
-
-export_csv(result.profiles, "exports/clusters_profils.csv")
-export_csv(result.victims, "exports/usagers_avec_cluster.csv")
-export_csv(result.diagnostics, "exports/clusters_diagnostic.csv")
-```
-
-Le clustering utilise une distance de Gower et une classification hiérarchique à
-lien complet. Il compare par défaut 2 à 20 groupes et écarte les solutions contenant
-des microgroupes ou insuffisamment stables.
-
-## Générer un rapport PDF
-
-```python
-from accidentologie import save_pdf_report
-
-figures = [
-    ax_year.figure,
-    ax_vehicle.figure,
-    ax_map.figure,
-    ax_profiles.figure,
-    ax_diagnostic.figure,
-]
-
-save_pdf_report(
-    figures,
-    "rapport.pdf",
-    title="Rapport d'accidentologie — Royan et communes voisines",
+resultat = cluster_victims(
+    victimes,
+    min_clusters=2,
+    max_clusters=20,
+    stability_fraction=0.8,
+    max_victims=5000,
 )
+
+plot_cluster_profiles(resultat.profiles)
+plot_clustering_diagnostic(resultat.diagnostics)
 ```
 
-L'ordre des figures dans la liste détermine l'ordre des pages du rapport.
+Le clustering utilise l'âge, le sexe, la catégorie d'usager et le mode de
+déplacement des personnes blessées ou tuées. Sa stabilité est mesurée sur plusieurs
+sous-échantillons. Le calcul hiérarchique utilise une matrice O(n²), d'où la garde
+mémoire `max_victims`.
 
-## Utiliser `main.py`
+Ces groupes décrivent les victimes enregistrées. Ils ne mesurent pas la probabilité
+d'avoir un accident dans la population : cette mesure exigerait un dénominateur
+d'exposition, par exemple le trafic ou les distances parcourues.
 
-### Générer le rapport PDF de la CARA
-
-`main.py` utilise par défaut les 33 communes de la CARA. Pour télécharger les données
-manquantes, produire tous les CSV et graphiques, puis générer le rapport :
-
-```bash
-python main.py --download
-```
-
-Si les CSV BAAC sont déjà présents dans `data/`, le téléchargement peut être omis :
-
-```bash
-python main.py
-```
-
-Ces commandes analysent les 33 communes de la CARA sur la période 2005–2024. Le
-graphique des personnes tuées porte sur 2023 et 2024, les deux dernières années de
-la sélection. Le PDF est créé ici :
-
-```text
-outputs/communaute-d-agglomeration-royan-atlantique-cara/rapport.pdf
-```
-
-Pour indiquer explicitement la période et les années du graphique des personnes
-tuées :
-
-```bash
-python main.py \
-  --years 2005 2006 2007 2008 2009 2010 2011 2012 2013 2014 \
-          2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 \
-  --fatality-years 2023 2024
-```
-
-Le rapport peut aussi être construit avec l'API Python :
+## Créer un rapport PDF
 
 ```python
 from accidentologie import (
-    Territory,
-    cluster_victims,
-    get_dataframe,
-    get_fatalities_by_user_type,
-    get_vehicle_severity_table,
-    get_victim_dataframe,
     plot_accident_per_year,
-    plot_cluster_profiles,
-    plot_clustering_diagnostic,
-    plot_fatalities_by_user_type,
     plot_severity_map_static,
     plot_vehicle_severity_table,
     save_pdf_report,
 )
 
-cara = Territory(
-    "Communauté d'agglomération Royan Atlantique (CARA)",
-    [
-        "17015", "17021", "17034", "17060", "17064", "17068", "17079",
-        "17098", "17119", "17131", "17152", "17155", "17160", "17183",
-        "17151", "17452", "17097", "17225", "17228", "17230", "17247",
-        "17248", "17306", "17307", "17311", "17333", "17380", "17393",
-        "17409", "17421", "17425", "17437", "17461",
-    ],
-)
-years = range(2005, 2025)
-accidents = get_dataframe(years=years, communes=cara.communes)
-usagers = get_victim_dataframe(years=years, communes=cara.communes)
-
-vehicules = get_vehicle_severity_table(accidents)
-tues = get_fatalities_by_user_type(usagers, years=[2023, 2024])
-clusters = cluster_victims(usagers)
-
-figures = [
-    plot_accident_per_year(
-        accidents,
-        title=f"Accidents par année et gravité — {cara.name}",
-    ).figure,
-    plot_vehicle_severity_table(
-        vehicules,
-        title=f"Accidents par véhicule et gravité — {cara.name}",
-    ).figure,
-    plot_fatalities_by_user_type(
-        tues,
-        title=f"Personnes tuées par type d'usager — {cara.name}",
-    ).figure,
-    plot_severity_map_static(
-        accidents,
-        title=f"Accidents géolocalisés — {cara.name}",
-    ).figure,
-    plot_cluster_profiles(
-        clusters.profiles,
-        title=f"Profils de victimes — {cara.name}",
-    ).figure,
-    plot_clustering_diagnostic(
-        clusters.diagnostics,
-        title=f"Choix du nombre de profils — {cara.name}",
-    ).figure,
-]
-
+ax_annee = plot_accident_per_year(accidents)
+ax_vehicules = plot_vehicle_severity_table(par_vehicule)
+ax_carte = plot_severity_map_static(accidents)
+figures = [ax_annee.figure, ax_vehicules.figure, ax_carte.figure]
 save_pdf_report(
     figures,
-    "rapport_cara.pdf",
-    title=f"Rapport d'accidentologie — {cara.name}",
+    "rapport.pdf",
+    title=f"Rapport d'accidentologie — {territoire.name}",
 )
 ```
 
-Les résultats sont écrits dans `outputs/<territoire>/` :
+`save_pdf_report` conserve la taille et la configuration de mise en page originales
+des figures fournies.
 
-```text
-csv/                    # toutes les tables exportables
-plots/                  # chaque graphique en PNG
-carte_interactive.html  # carte Folium
-rapport.pdf             # figures assemblées
-```
+## Interface en ligne de commande
 
-### Rapport pour une autre ville
-
-Royan, pour 2015–2024 :
+Le territoire est toujours explicite. Sans `--years`, toutes les années disponibles
+localement sont analysées.
 
 ```bash
 python main.py \
-  --territory-name "Royan" \
-  --communes 17306 \
-  --years 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024
-```
-
-Plusieurs communes :
-
-```bash
-python main.py \
-  --territory-name "Côte de Beauté" \
-  --communes 17306 17333 17380 17461 \
-  --years 2020 2021 2022 2023 2024 \
-  --fatality-years 2023 2024 \
+  --territory-name "Paris 1er" \
+  --communes 75101 \
+  --years 2022 2023 2024 \
   --download
 ```
 
-Le graphique des personnes tuées porte par défaut sur les deux dernières années de
-la sélection ; le CSV conserve toutes les années. `--fatality-years` permet de choisir
-explicitement les années du graphique.
+Le programme crée dans `outputs/<territoire>/` :
 
-Pour un petit territoire où le clustering serait peu pertinent :
+```text
+csv/                    # tableaux exportés
+plots/                  # graphiques PNG
+carte_interactive.html  # carte Folium
+rapport.pdf             # rapport assemblé
+```
+
+Options utiles :
+
+- `--fatality-years` sélectionne les années du graphique des personnes tuées ;
+- `--skip-clustering` désactive le clustering ;
+- `--cluster-max-clusters` et `--cluster-max-victims` contrôlent son amplitude ;
+- `--force-download` remplace les CSV locaux ;
+- `--no-basemap` produit la carte PDF sans accès réseau ;
+- `--no-interactive-map` désactive le fichier Folium ;
+- `--territory-geojson` charge les communes depuis un fichier GeoJSON.
+
+### Rapport d'exemple pour la CARA
+
+Le fichier `data/reference/cara_communes.geojson` constitue la source unique des
+communes utilisées par cet exemple.
 
 ```bash
-python main.py --territory-name "Royan" --communes 17306 --skip-clustering
+python main.py \
+  --territory-name "Communauté d'agglomération Royan Atlantique (CARA)" \
+  --territory-geojson data/reference/cara_communes.geojson
 ```
 
-## Utilisation dans une application web
+Ajouter `--download` si les trois tables nécessaires ne sont pas encore présentes.
 
-- `download_csv_files(..., progress=None)` convient à une tâche d'arrière-plan ;
-- les DataFrames peuvent être sérialisés en CSV avec `export_csv` ou directement en
-  JSON avec Pandas ;
-- les figures Matplotlib peuvent être écrites dans un `BytesIO` ;
-- `plot_severity_map` retourne le HTML Folium via `carte.get_root().render()` ;
-- `save_pdf_report` accepte n'importe quelle sélection de figures.
+## Notebook d'exemple
 
-Graphique en mémoire :
+[![Ouvrir dans Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bbodin/accidentologie/blob/main/notebooks/accidentologie_demo.ipynb)
 
-```python
-from io import BytesIO
+[`notebooks/accidentologie_demo.ipynb`](notebooks/accidentologie_demo.ipynb) applique
+l'API à la CARA sur 2020–2024. Il charge les communes depuis le même GeoJSON, montre
+comment construire une agrégation directement avec Pandas et produit les graphiques
+du package. La première cellule installe directement la bibliothèque depuis GitHub.
+Les cellules suivantes téléchargent uniquement les trois tables BAAC nécessaires pour
+2020–2024. Le notebook est versionné sans sorties exécutées.
 
-buffer = BytesIO()
-ax = plot_accident_per_year(accidents)
-ax.figure.savefig(buffer, format="png", dpi=160, bbox_inches="tight")
-buffer.seek(0)
+```bash
+jupyter lab notebooks/accidentologie_demo.ipynb
 ```
+
+![Accidents par année et gravité dans la CARA](docs/images/cara-accidents-par-annee.png)
+
+*Accidents par année et gravité dans le territoire d'exemple, 2020–2024.*
+
+![Saisonnalité mensuelle des accidents](docs/images/cara-saisonnalite.png)
+
+*Nombre mensuel d'accidents dans le territoire d'exemple, 2020–2024.*
+
+![Carte statique des accidents](docs/images/cara-carte-geographique.png)
+
+*Carte statique produite par `plot_severity_map_static`, 2020–2024.*
 
 ## Limites des données
 
-- La géolocalisation est très incomplète avant 2013. Les comptages restent valides,
-  mais la carte ne représente que les accidents disposant de coordonnées.
+- La géolocalisation est très incomplète avant 2013 ; les cartes ne représentent
+  que les accidents possédant des coordonnées valides.
 - Les changements et fusions de communes ne sont pas reconstruits automatiquement.
-- Les catégories BAAC ont évolué ; les anciennes catégories restent explicitement
-  libellées.
-- Sans population exposée, trafic ou kilométrage parcouru, les résultats décrivent
-  les accidents observés et non un risque individuel absolu.
+- Les catégories de véhicules et les procédures de collecte ont évolué.
+- La série des blessés hospitalisés connaît une rupture à partir de 2018.
+- Le BAAC décrit les accidents enregistrés, pas l'exposition au risque routier.
 
-## Source et licence
+## Tests
 
-Données : Ministère de l'Intérieur — bases annuelles BAAC publiées sur
-[data.gouv.fr](https://www.data.gouv.fr/datasets/bases-de-donnees-annuelles-des-accidents-corporels-de-la-circulation-routiere-annees-de-2005-a-2024).
+```bash
+python -m unittest discover -s tests -v
+```
 
-Le code du projet est sous licence MIT.
+## Source et licences
+
+Données : Ministère de l'Intérieur et ONISR, bases annuelles BAAC publiées sur
+[data.gouv.fr](https://www.data.gouv.fr/datasets/bases-de-donnees-annuelles-des-accidents-corporels-de-la-circulation-routiere-annees-de-2005-a-2024),
+sous Licence Ouverte.
+
+Le code du projet est distribué sous licence MIT.

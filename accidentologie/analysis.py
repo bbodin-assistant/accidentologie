@@ -17,7 +17,13 @@ from .data import (
 )
 
 
-USER_CATEGORY = {"1": "Conducteur", "2": "Passager", "3": "Piéton"}
+USER_CATEGORY = {
+    "1": "Conducteur",
+    "2": "Passager",
+    "3": "Piéton",
+    # Ancien schéma BAAC : piéton en roller ou trottinette.
+    "4": "Piéton",
+}
 SEX = {"1": "Homme", "2": "Femme"}
 USER_SEVERITY = {
     "1": "Indemne",
@@ -49,7 +55,7 @@ def get_vehicle_severity_table(dataframe: pd.DataFrame) -> pd.DataFrame:
 
     Un accident multivéhicule figure une fois pour chaque type distinct impliqué.
     """
-    required = {"accident_id", "year", "severity", "vehicle_types"}
+    required = {"accident_id", "severity", "vehicle_types"}
     missing = required.difference(dataframe.columns)
     if missing:
         raise ValueError(f"Colonnes absentes : {sorted(missing)}")
@@ -115,11 +121,15 @@ def get_victim_dataframe(
                 "Num_Acc", "id_usager", "id_vehicule", "num_veh", "catu",
                 "grav", "sexe", "an_nais",
             },
+            required_columns={
+                "Num_Acc", "num_veh", "catu", "grav", "sexe", "an_nais"
+            },
         )
         vehicles = _read_baac(
             year_dir / f"vehicules-{year}.csv",
             year,
             {"Num_Acc", "id_vehicule", "num_veh", "catv"},
+            required_columns={"Num_Acc", "num_veh", "catv"},
         )
         for frame in (users, vehicles):
             frame["Num_Acc"] = frame["Num_Acc"].astype("string").str.strip()
@@ -194,7 +204,11 @@ def get_fatalities_by_user_type(
         raise ValueError(f"Colonnes absentes : {sorted(missing)}")
     selected = victims[victims["severity_code"].eq("2")].copy()
     if years is not None:
-        requested = {int(years)} if isinstance(years, int) else {int(y) for y in years}
+        requested = (
+            {int(years)}
+            if isinstance(years, (int, str))
+            else {int(y) for y in years}
+        )
         selected = selected[selected["year"].isin(requested)]
     return (
         selected.groupby(["year", "user_type"], as_index=False)

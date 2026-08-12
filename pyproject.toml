@@ -13,6 +13,7 @@ authors = [{name = "Projet Accidentologie"}]
 dependencies = [
     "pandas>=2.0,<3.0",
     "folium>=0.16,<1.0",
+    "contextily>=1.6,<2.0",
     "matplotlib>=3.8,<4.0",
     "scikit-learn>=1.4,<2.0",
     "scipy>=1.11,<2.0",

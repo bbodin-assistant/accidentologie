@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import html
 import json
+import math
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from .data import get_dataframe
+from .data import _normalize_years, get_dataframe
 
 
 SEVERITY_TO_WEB_CODE = {
     "Indemne seulement": 0,
     "Léger": 1,
-    "Grave non mortel": 2,
+    "Blessé hospitalisé": 2,
     "Mortel": 3,
     "Inconnue": -1,
 }
@@ -36,6 +37,10 @@ def build_web_map(
     data_dir: str | Path = "data",
     output_dir: str | Path = "site",
     title: str = "Carte des accidents corporels",
+    fallback_center: tuple[float, float] = (46.5, 2.2),
+    fallback_zoom: int = 5,
+    basemap_url: str = "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    basemap_attribution: str = "© OpenStreetMap, © CARTO",
 ) -> Path:
     """Construit un site cartographique WebGL et retourne son fichier ``index.html``.
 
@@ -44,14 +49,14 @@ def build_web_map(
     identifiant d'accident et date. Les adresses et données relatives aux usagers ne
     sont jamais écrites dans le site.
     """
-    if years is None:
-        selected_years = list(range(2005, 2025))
-    elif isinstance(years, (int, str)):
-        selected_years = [int(years)]
-    else:
-        selected_years = sorted({int(year) for year in years})
-    if not selected_years:
-        raise ValueError("La liste `years` ne peut pas être vide")
+    data_directory = Path(data_dir).expanduser()
+    selected_years = _normalize_years(years, data_directory)
+    if len(fallback_center) != 2:
+        raise ValueError("`fallback_center` doit contenir latitude et longitude")
+    if not -90 <= fallback_center[0] <= 90 or not -180 <= fallback_center[1] <= 180:
+        raise ValueError("`fallback_center` contient des coordonnées invalides")
+    if not 0 <= fallback_zoom <= 22:
+        raise ValueError("`fallback_zoom` doit être compris entre 0 et 22")
 
     destination = Path(output_dir)
     points_dir = destination / "points"
@@ -59,8 +64,10 @@ def build_web_map(
     manifest_years: list[dict[str, Any]] = []
     total_accidents = 0
     total_mapped = 0
-    longitude_sum = 0.0
-    latitude_sum = 0.0
+    longitude_min = math.inf
+    longitude_max = -math.inf
+    latitude_min = math.inf
+    latitude_max = -math.inf
 
     for year in selected_years:
         accidents = get_dataframe(
@@ -107,8 +114,29 @@ def build_web_map(
         total_accidents += len(accidents)
         total_mapped += len(mapped)
         if not mapped.empty:
-            longitude_sum += float(mapped["longitude"].sum())
-            latitude_sum += float(mapped["latitude"].sum())
+            longitude_min = min(longitude_min, float(mapped["longitude"].min()))
+            longitude_max = max(longitude_max, float(mapped["longitude"].max()))
+            latitude_min = min(latitude_min, float(mapped["latitude"].min()))
+            latitude_max = max(latitude_max, float(mapped["latitude"].max()))
+
+    if total_mapped:
+        longitude_span = max(longitude_max - longitude_min, 1e-6)
+        latitude_span = max(latitude_max - latitude_min, 1e-6)
+        geographic_span = max(longitude_span, latitude_span * 1.4)
+        automatic_zoom = max(1, min(16, int(math.floor(math.log2(360 / geographic_span))) - 1))
+        view = {
+            "longitude": (longitude_min + longitude_max) / 2,
+            "latitude": (latitude_min + latitude_max) / 2,
+            "zoom": automatic_zoom,
+            "bounds": [[longitude_min, latitude_min], [longitude_max, latitude_max]],
+        }
+    else:
+        view = {
+            "longitude": float(fallback_center[1]),
+            "latitude": float(fallback_center[0]),
+            "zoom": int(fallback_zoom),
+            "bounds": None,
+        }
 
     manifest = {
         "title": title,
@@ -116,23 +144,21 @@ def build_web_map(
         "totalAccidents": total_accidents,
         "totalMapped": total_mapped,
         "generatedFrom": "BAAC — Ministère de l'Intérieur / ONISR",
-        "view": {
-            "longitude": longitude_sum / total_mapped if total_mapped else 2.3,
-            "latitude": latitude_sum / total_mapped if total_mapped else 46.4,
-            "zoom": 9 if communes is not None else 5,
-        },
+        "view": view,
     }
     _write_json(destination / "manifest.json", manifest)
     (destination / ".nojekyll").write_text("", encoding="utf-8")
     (destination / "index.html").write_text(
-        _html_template(title), encoding="utf-8"
+        _html_template(title, basemap_url, basemap_attribution), encoding="utf-8"
     )
     return destination / "index.html"
 
 
-def _html_template(title: str) -> str:
+def _html_template(title: str, basemap_url: str, basemap_attribution: str) -> str:
     safe_title = json.dumps(title, ensure_ascii=False)
+    safe_basemap_url = json.dumps(basemap_url, ensure_ascii=False)
     escaped_title = html.escape(title)
+    escaped_attribution = html.escape(basemap_attribution)
     return f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -183,9 +209,10 @@ def _html_template(title: str) -> str:
       <legend>Gravité</legend>
       <div class="severity">
         <label><input type="checkbox" data-severity="3" checked><span class="dot" style="background:#d00000"></span>Mortel</label>
-        <label><input type="checkbox" data-severity="2" checked><span class="dot" style="background:#f28c00"></span>Grave</label>
+        <label><input type="checkbox" data-severity="2" checked><span class="dot" style="background:#f28c00"></span>Hospitalisé</label>
         <label><input type="checkbox" data-severity="1" checked><span class="dot" style="background:#ffd800"></span>Léger</label>
-        <label><input type="checkbox" data-severity="0" checked><span class="dot" style="background:#6baed6"></span>Indemne/autre</label>
+        <label><input type="checkbox" data-severity="0" checked><span class="dot" style="background:#6baed6"></span>Indemne</label>
+        <label><input type="checkbox" data-severity="-1" checked><span class="dot" style="background:#888"></span>Inconnue</label>
       </div>
     </fieldset>
     <fieldset>
@@ -193,13 +220,16 @@ def _html_template(title: str) -> str:
       <div class="actions"><button id="allYears">Toutes</button><button id="noYears">Aucune</button></div>
       <div class="years" id="years"></div>
     </fieldset>
-    <p class="footnote">Source : BAAC — Ministère de l’Intérieur / ONISR, Licence Ouverte. Seuls les accidents disposant de coordonnées valides sont positionnés. Les adresses et caractéristiques individuelles ne sont pas publiées ici.</p>
+    <p class="footnote">Données : BAAC — Ministère de l’Intérieur / ONISR,
+      Licence Ouverte. Fond : {escaped_attribution}. Seuls les accidents
+      disposant de coordonnées valides sont positionnés ; les adresses et
+      caractéristiques individuelles ne sont pas publiées.</p>
   </aside>
   <div id="tooltip"></div>
   <script>
     const PAGE_TITLE = {safe_title};
     const COLORS = {{'-1':[140,140,140,150],0:[107,174,214,150],1:[255,216,0,175],2:[242,140,0,210],3:[208,0,0,235]}};
-    const LABELS = {{'-1':'Inconnue',0:'Indemne seulement',1:'Léger',2:'Grave non mortel',3:'Mortel'}};
+    const LABELS = {{'-1':'Inconnue',0:'Indemne seulement',1:'Léger',2:'Blessé hospitalisé',3:'Mortel'}};
     const loaded = new Map();
     const selectedYears = new Set();
     const selectedSeverities = new Set([-1,0,1,2,3]);
@@ -208,7 +238,7 @@ def _html_template(title: str) -> str:
 
     function basemapLayer() {{
       return new deck.TileLayer({{
-        id:'basemap', data:'https://a.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}.png',
+        id:'basemap', data:{safe_basemap_url},
         minZoom:0, maxZoom:19, tileSize:256,
         renderSubLayers: props => {{
           const bounds = props.tile.boundingBox;

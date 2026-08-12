@@ -1,5 +1,7 @@
 """API publique pour explorer les données françaises d'accidentologie BAAC."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from .analysis import (
     export_csv,
     get_accidents_per_year,
@@ -7,9 +9,9 @@ from .analysis import (
     get_vehicle_severity_table,
     get_victim_dataframe,
 )
-from .clustering import ClusterResult, cluster_victims
+from .clustering import ClusterResult, ClusteringError, cluster_victims
 from .data import get_dataframe
-from .download import console_progress, download_csv_files
+from .download import ANALYSIS_TABLES, TABLES, console_progress, download_csv_files
 from .plots import (
     plot_accident_per_year,
     plot_cluster_profiles,
@@ -29,6 +31,9 @@ from .web import build_web_map
 
 __all__ = [
     "ClusterResult",
+    "ClusteringError",
+    "ANALYSIS_TABLES",
+    "TABLES",
     "Territory",
     "cluster_victims",
     "build_web_map",
@@ -54,4 +59,7 @@ __all__ = [
     "save_pdf_report",
 ]
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("accidentologie")
+except PackageNotFoundError:  # exécution directe depuis une copie des sources
+    __version__ = "0+unknown"

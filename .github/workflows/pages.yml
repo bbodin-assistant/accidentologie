@@ -7,6 +7,8 @@ on:
     paths:
       - "accidentologie/**"
       - "data/**/*.csv"
+      - "data/reference/cara_communes.geojson"
+      - "tests/**"
       - "pyproject.toml"
       - ".github/build_pages.py"
       - ".github/workflows/pages.yml"
@@ -34,9 +36,9 @@ jobs:
       # est remplacé, et non à chaque modification du code ou du README.
       - name: Restaurer le cache des CSV BAAC
         id: baac-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
-          path: data
+          path: data/[0-9][0-9][0-9][0-9]
           key: baac-lfs-${{ runner.os }}-${{ hashFiles('data/**/*.csv') }}
 
       - name: Récupérer les objets LFS si le cache est absent
@@ -50,13 +52,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find data -mindepth 2 -maxdepth 2 -name '*.csv' | wc -l)" -eq 80
-          for file in data/{2005..2024}/{caracteristiques,usagers,vehicules}-*.csv; do
-            if head -n 1 "$file" | grep -q 'git-lfs'; then
-              echo "Erreur : $file est encore un pointeur Git LFS." >&2
-              exit 1
-            fi
+          found_year=false
+          for year_dir in data/[12][0-9][0-9][0-9]; do
+            test -d "$year_dir" || continue
+            found_year=true
+            year="${year_dir##*/}"
+            for table in caracteristiques usagers vehicules; do
+              file="$year_dir/$table-$year.csv"
+              test -s "$file"
+              if head -n 1 "$file" | grep -q 'git-lfs'; then
+                echo "Erreur : $file est encore un pointeur Git LFS." >&2
+                exit 1
+              fi
+            done
           done
+          test "$found_year" = true
           du -sh data
 
       - name: Installer Python
@@ -67,6 +77,11 @@ jobs:
 
       - name: Installer accidentologie
         run: python -m pip install .
+
+      - name: Tester la bibliothèque
+        env:
+          MPLBACKEND: Agg
+        run: python -m unittest discover -s tests -v
 
       - name: Générer la carte WebGL de la CARA
         env:
@@ -87,10 +102,10 @@ jobs:
           PY
 
       - name: Configurer GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Publier l'artifact Pages
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -104,4 +119,4 @@ jobs:
     steps:
       - name: Déployer GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

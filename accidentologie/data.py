@@ -15,9 +15,14 @@ SEVERITY_LABELS = {
     "-1": "Inconnue",
     "1": "Indemne seulement",
     "4": "Léger",
-    "3": "Grave non mortel",
+    "3": "Blessé hospitalisé",
     "2": "Mortel",
 }
+
+# La collecte des blessés hospitalisés connaît une rupture méthodologique à
+# partir des données 2018. Cette constante est publique afin que les rendus puissent
+# signaler explicitement la rupture au lieu de présenter une série homogène.
+HOSPITALIZED_SERIES_BREAK_YEAR = 2018
 
 VEHICLE_LABELS = {
     "0": "Véhicule indéterminé",
@@ -97,13 +102,20 @@ def _delimiter(path: Path) -> str:
     return detected.decode("ascii")
 
 
-def _read_baac(path: Path, year: int, columns: set[str]) -> pd.DataFrame:
+def _read_baac(
+    path: Path,
+    year: int,
+    columns: set[str],
+    *,
+    required_columns: set[str] | None = None,
+) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
-            f"Fichier BAAC absent : {path}. Lancez `python main.py` pour télécharger les données."
+            f"Fichier BAAC absent : {path}. Utilisez "
+            "`accidentologie.download_csv_files(...)` ou `python main.py --download`."
         )
     encoding = "latin-1" if year <= 2018 else "utf-8"
-    return pd.read_csv(
+    dataframe = pd.read_csv(
         path,
         sep=_delimiter(path),
         encoding=encoding,
@@ -111,6 +123,14 @@ def _read_baac(path: Path, year: int, columns: set[str]) -> pd.DataFrame:
         usecols=lambda column: column in columns,
         low_memory=False,
     )
+    required = columns if required_columns is None else required_columns
+    missing = sorted(required.difference(dataframe.columns))
+    if missing:
+        raise ValueError(
+            f"Schéma BAAC incompatible dans {path} : colonnes obligatoires absentes : "
+            + ", ".join(missing)
+        )
+    return dataframe
 
 
 def _clean_code(series: pd.Series) -> pd.Series:
@@ -121,7 +141,7 @@ def _available_years(data_dir: Path) -> list[int]:
     years = []
     if data_dir.exists():
         for child in data_dir.iterdir():
-            if child.is_dir() and re.fullmatch(r"20\d{2}", child.name):
+            if child.is_dir() and re.fullmatch(r"(?:19|20)\d{2}", child.name):
                 year = int(child.name)
                 if (child / f"caracteristiques-{year}.csv").exists():
                     years.append(year)
@@ -133,7 +153,8 @@ def _normalize_years(years: Iterable[int] | int | None, data_dir: Path) -> list[
     if not available:
         raise FileNotFoundError(
             f"Aucune donnée annuelle trouvée dans {data_dir.resolve()}. "
-            "Lancez `python main.py` depuis le dépôt."
+            "Utilisez `accidentologie.download_csv_files(...)` ou "
+            "`python main.py --download`."
         )
     if years is None:
         return available
@@ -231,7 +252,16 @@ def _load_year(data_dir: Path, year: int, communes: set[str] | None) -> pd.DataF
             "lat",
             "long",
         },
-    ).rename(columns={"Accident_Id": "Num_Acc"})
+        required_columns={
+            "jour", "mois", "hrmn", "dep", "com", "adr", "lat", "long"
+        },
+    )
+    if not {"Num_Acc", "Accident_Id"}.intersection(characteristics.columns):
+        raise ValueError(
+            f"Schéma BAAC incompatible dans {year_dir}: "
+            "identifiant Num_Acc/Accident_Id absent"
+        )
+    characteristics = characteristics.rename(columns={"Accident_Id": "Num_Acc"})
     characteristics["Num_Acc"] = characteristics["Num_Acc"].astype("string").str.strip()
     characteristics["commune_code"] = _commune_codes(characteristics, year)
     characteristics["department_code"] = _department_codes(characteristics, year)
@@ -246,7 +276,10 @@ def _load_year(data_dir: Path, year: int, communes: set[str] | None) -> pd.DataF
 
     accident_ids = set(characteristics["Num_Acc"])
     users = _read_baac(
-        year_dir / f"usagers-{year}.csv", year, {"Num_Acc", "grav"}
+        year_dir / f"usagers-{year}.csv",
+        year,
+        {"Num_Acc", "grav"},
+        required_columns={"Num_Acc", "grav"},
     )
     users["Num_Acc"] = users["Num_Acc"].astype("string").str.strip()
     users = users[users["Num_Acc"].isin(accident_ids)].copy()
@@ -265,6 +298,7 @@ def _load_year(data_dir: Path, year: int, communes: set[str] | None) -> pd.DataF
         year_dir / f"vehicules-{year}.csv",
         year,
         {"Num_Acc", "num_veh", "id_vehicule", "catv"},
+        required_columns={"Num_Acc", "catv"},
     )
     vehicles["Num_Acc"] = vehicles["Num_Acc"].astype("string").str.strip()
     vehicles = vehicles[vehicles["Num_Acc"].isin(accident_ids)].copy()

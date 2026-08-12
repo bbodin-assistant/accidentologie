@@ -27,9 +27,15 @@ def save_pdf_report(
     with PdfPages(path, metadata=pdf_metadata) as pdf:
         count = 0
         for figure in figures:
-            figure.set_size_inches(*page_size)
-            figure.tight_layout()
-            pdf.savefig(figure)
+            original_size = tuple(figure.get_size_inches())
+            original_layout_engine = figure.get_layout_engine()
+            try:
+                figure.set_size_inches(*page_size)
+                figure.set_layout_engine("tight")
+                pdf.savefig(figure)
+            finally:
+                figure.set_layout_engine(original_layout_engine)
+                figure.set_size_inches(*original_size)
             count += 1
     if count == 0:
         path.unlink(missing_ok=True)

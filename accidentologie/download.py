@@ -12,13 +12,13 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-DATASET_SLUG = (
-    "bases-de-donnees-annuelles-des-accidents-corporels-de-la-circulation-"
-    "routiere-annees-de-2005-a-2024"
-)
-API_URL = f"https://www.data.gouv.fr/api/1/datasets/{DATASET_SLUG}/"
+# Identifiant stable data.gouv.fr, indépendant du titre et de l'année maximale
+# affichée dans le slug public du jeu de données.
+DATASET_ID = "53698f4ca3a729239d2036df"
+API_URL = f"https://www.data.gouv.fr/api/1/datasets/{DATASET_ID}/"
 TABLES = ("caracteristiques", "lieux", "vehicules", "usagers")
-YEAR_PATTERN = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
+ANALYSIS_TABLES = ("caracteristiques", "vehicules", "usagers")
+YEAR_PATTERN = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 ProgressCallback = Callable[[Path, int, int | None], None]
 
 
@@ -137,15 +137,31 @@ def download_csv_files(
     years: Iterable[int] | int | None = None,
     *,
     data_dir: str | Path = "data",
+    tables: Iterable[str] | str = TABLES,
     force: bool = False,
     retries: int = 3,
     progress: ProgressCallback | None = console_progress,
 ) -> list[Path]:
-    """Télécharge les quatre CSV BAAC pour les années demandées.
+    """Télécharge les CSV BAAC demandés pour les années sélectionnées.
 
     Retourne uniquement les chemins effectivement téléchargés. Les fichiers déjà
-    présents sont conservés, sauf avec ``force=True``.
+    présents sont conservés, sauf avec ``force=True``. Par défaut, les quatre
+    tables officielles sont récupérées ; ``tables=ANALYSIS_TABLES`` limite le
+    téléchargement aux trois tables utilisées par les analyses du package.
     """
+    if retries < 1:
+        raise ValueError("`retries` doit valoir au moins 1")
+    requested_tables = [tables] if isinstance(tables, str) else list(tables)
+    requested_tables = list(
+        dict.fromkeys(str(table).strip().casefold() for table in requested_tables)
+    )
+    invalid_tables = sorted(set(requested_tables).difference(TABLES))
+    if invalid_tables or not requested_tables:
+        raise ValueError(
+            "Tables BAAC invalides : "
+            + (", ".join(invalid_tables) if invalid_tables else "liste vide")
+            + f". Valeurs acceptées : {', '.join(TABLES)}."
+        )
     dataset = _fetch_dataset()
     resources = _annual_resources(dataset)
     if not resources:
@@ -165,7 +181,7 @@ def download_csv_files(
     missing_tables = [
         (year, table)
         for year in selected
-        for table in TABLES
+        for table in requested_tables
         if (year, table) not in resources
     ]
     if missing_tables:
@@ -174,7 +190,7 @@ def download_csv_files(
     directory = Path(data_dir).expanduser()
     downloaded: list[Path] = []
     for year in selected:
-        for table in TABLES:
+        for table in requested_tables:
             destination = directory / str(year) / f"{table}-{year}.csv"
             if _download_file(
                 str(resources[(year, table)]["url"]),

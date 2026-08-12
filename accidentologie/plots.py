@@ -3,30 +3,38 @@
 from __future__ import annotations
 
 import html
+import warnings
 from pathlib import Path
 from typing import Any
 
+import contextily as ctx
 import folium
 import matplotlib.pyplot as plt
 import pandas as pd
+from branca.element import Element
 from folium.plugins import MarkerCluster
+
+from .data import HOSPITALIZED_SERIES_BREAK_YEAR
 
 
 SEVERITY_ORDER = [
     "Léger",
-    "Grave non mortel",
+    "Blessé hospitalisé",
     "Mortel",
     "Indemne seulement",
     "Inconnue",
 ]
 SEVERITY_COLORS = {
     "Léger": "#FFD800",
-    "Grave non mortel": "#F28C00",
+    "Blessé hospitalisé": "#F28C00",
     "Mortel": "#D00000",
     "Indemne seulement": "#6BAED6",
     "Inconnue": "#999999",
 }
-MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+MONTH_LABELS = [
+    "Jan", "Fév", "Mar", "Avr", "Mai", "Juin",
+    "Juil", "Août", "Sep", "Oct", "Nov", "Déc",
+]
 WEEKDAY_LABELS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 
 
@@ -43,6 +51,7 @@ def plot_accident_per_year(
     *,
     ax: Any | None = None,
     stacked: bool = True,
+    methodology_break_year: int | None = HOSPITALIZED_SERIES_BREAK_YEAR,
     title: str = "Nombre d'accidents par année et gravité",
 ) -> Any:
     """Trace le nombre d'accidents par année et gravité et retourne l'axe Matplotlib."""
@@ -78,6 +87,22 @@ def plot_accident_per_year(
     ax.set_axisbelow(True)
     ax.legend(title="Gravité", frameon=False)
     ax.tick_params(axis="x", rotation=0)
+    years = [int(year) for year in counts.index]
+    if (
+        methodology_break_year is not None
+        and min(years) < methodology_break_year <= max(years)
+    ):
+        first_new_index = next(
+            index for index, year in enumerate(years) if year >= methodology_break_year
+        )
+        ax.axvline(
+            first_new_index - 0.5,
+            color="#5F6368",
+            linestyle="--",
+            linewidth=1.1,
+            label=f"Rupture de série BAAC ({methodology_break_year})",
+        )
+        ax.legend(title="Gravité", frameon=False)
     return ax
 
 
@@ -234,7 +259,7 @@ def plot_mobility_severity(
     *,
     ax: Any | None = None,
     min_victims: int = 10,
-    title: str = "Gravité observée selon le mode de déplacement",
+    title: str = "Gravité observée parmi les victimes, par mode de déplacement",
 ) -> Any:
     """Compare la part hospitalisée ou tuée par mobilité parmi les victimes blessées."""
     _require_columns(victims, {"victim_id", "mobility", "severity_code"})
@@ -264,7 +289,7 @@ def plot_mobility_severity(
     )
     ax.set_xlim(0, min(100, summary["rate"].max() + 25))
     ax.set_title(title)
-    ax.set_xlabel("Part des victimes hospitalisées ou tuées")
+    ax.set_xlabel("Part observée des victimes hospitalisées ou tuées")
     ax.set_ylabel("Mode de déplacement")
     ax.grid(axis="x", alpha=0.25)
     ax.set_axisbelow(True)
@@ -292,7 +317,7 @@ def plot_vehicle_severity_table(
     *,
     ax: Any | None = None,
     title: str = "Accidents par véhicule impliqué et gravité",
-    max_rows: int = 18,
+    max_rows: int | None = None,
 ) -> Any:
     """Affiche le résultat de :func:`get_vehicle_severity_table` en tableau."""
     _require_columns(table_data, {"vehicle_type", "severity", "accident_count"})
@@ -306,7 +331,11 @@ def plot_vehicle_severity_table(
     severity_columns = [severity for severity in SEVERITY_ORDER if severity in pivot]
     pivot = pivot[severity_columns]
     pivot["Total"] = pivot.sum(axis=1)
-    pivot = pivot.sort_values("Total", ascending=False).head(max_rows)
+    pivot = pivot.sort_values("Total", ascending=False)
+    if max_rows is not None:
+        if max_rows < 1:
+            raise ValueError("`max_rows` doit être positif ou None")
+        pivot = pivot.head(max_rows)
     display = pivot.reset_index()
     display.columns = ["Type de véhicule", *severity_columns, "Total"]
     if ax is None:
@@ -366,9 +395,18 @@ def plot_severity_map_static(
     dataframe: pd.DataFrame,
     *,
     ax: Any | None = None,
+    basemap: bool = True,
+    basemap_source: Any | None = None,
+    basemap_zoom: int | str = "auto",
+    hide_axes: bool = True,
     title: str = "Carte des accidents corporels",
 ) -> Any:
-    """Trace une carte statique, adaptée à l'intégration dans un PDF."""
+    """Trace une carte statique avec fond cartographique, adaptée aux PDF.
+
+    Le fond CartoDB est chargé par Internet et mis en cache par Contextily. Passez
+    ``basemap=False`` pour un rendu hors ligne ou fournissez un autre
+    ``basemap_source`` compatible avec Contextily.
+    """
     _require_columns(dataframe, {"latitude", "longitude", "severity"})
     mapped = dataframe[
         dataframe["latitude"].notna() & dataframe["longitude"].notna()
@@ -379,8 +417,10 @@ def plot_severity_map_static(
         _, ax = plt.subplots(figsize=(9, 8))
     styles = [
         ("Léger", "o", "#FFD800", 14, "#8F7900"),
-        ("Grave non mortel", "D", "#F28C00", 30, "#8A4B00"),
+        ("Blessé hospitalisé", "D", "#F28C00", 30, "#8A4B00"),
         ("Mortel", "*", "#D00000", 100, "#8A0000"),
+        ("Indemne seulement", "o", "#6BAED6", 14, "#315B78"),
+        ("Inconnue", "s", "#999999", 18, "#555555"),
     ]
     for severity, marker, color, size, edge in styles:
         subset = mapped[mapped["severity"].eq(severity)]
@@ -392,10 +432,51 @@ def plot_severity_map_static(
             alpha=0.65 if severity == "Léger" else 0.85,
             label=f"{severity} ({len(subset)})",
         )
+    longitude_padding = max((mapped["longitude"].max() - mapped["longitude"].min()) * 0.04, 0.002)
+    latitude_padding = max((mapped["latitude"].max() - mapped["latitude"].min()) * 0.04, 0.002)
+    ax.set_xlim(
+        mapped["longitude"].min() - longitude_padding,
+        mapped["longitude"].max() + longitude_padding,
+    )
+    ax.set_ylim(
+        mapped["latitude"].min() - latitude_padding,
+        mapped["latitude"].max() + latitude_padding,
+    )
+    if basemap:
+        source = basemap_source or ctx.providers.CartoDB.Positron
+        try:
+            ctx.add_basemap(
+                ax,
+                source=source,
+                crs="EPSG:4326",
+                zoom=basemap_zoom,
+                attribution=False,
+                reset_extent=True,
+            )
+            ax.text(
+                0.995,
+                0.005,
+                "Fond : © OpenStreetMap, © CARTO",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=6,
+                color="#555555",
+                bbox={"facecolor": "white", "alpha": 0.65, "edgecolor": "none"},
+            )
+        except Exception as error:  # le nuage reste exploitable hors connexion
+            warnings.warn(
+                f"Fond cartographique indisponible ({error}). ",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     ax.set_title(title)
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.grid(alpha=0.20)
+    if hide_axes:
+        ax.set_axis_off()
+    else:
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        ax.grid(alpha=0.20)
     ax.legend(frameon=False)
     return ax
 
@@ -404,7 +485,7 @@ def plot_cluster_profiles(
     profiles: pd.DataFrame,
     *,
     ax: Any | None = None,
-    title: str = "Profils de victimes",
+    title: str = "Profils observés parmi les victimes",
 ) -> Any:
     """Trace le taux de victimes hospitalisées ou tuées de chaque cluster."""
     _require_columns(
@@ -430,7 +511,7 @@ def plot_cluster_profiles(
         fontsize=8,
     )
     ax.set_title(title)
-    ax.set_xlabel("Part des victimes hospitalisées ou tuées")
+    ax.set_xlabel("Part observée des victimes hospitalisées ou tuées")
     ax.set_xlim(0, ordered["serious_or_killed_rate_pct"].max() + 18)
     ax.grid(axis="x", alpha=0.25)
     ax.set_axisbelow(True)
@@ -480,17 +561,31 @@ def _marker_icon(severity: str) -> folium.DivIcon:
             'text-shadow:0 0 2px white,0 0 2px white;">★</div>'
         )
         size, anchor = (28, 28), (14, 14)
-    elif severity == "Grave non mortel":
+    elif severity == "Blessé hospitalisé":
         marker = (
             '<div style="width:15px;height:15px;background:#f28c00;'
             'border:2px solid #8a4b00;transform:rotate(45deg);'
             'box-shadow:0 0 2px white;"></div>'
         )
         size, anchor = (19, 19), (9, 9)
-    else:
+    elif severity == "Léger":
         marker = (
             '<div style="width:13px;height:13px;background:#ffd800;'
             'border:2px solid #8f7900;border-radius:50%;'
+            'box-shadow:0 0 2px white;"></div>'
+        )
+        size, anchor = (17, 17), (8, 8)
+    elif severity == "Indemne seulement":
+        marker = (
+            '<div style="width:13px;height:13px;background:#6baed6;'
+            'border:2px solid #315b78;border-radius:50%;'
+            'box-shadow:0 0 2px white;"></div>'
+        )
+        size, anchor = (17, 17), (8, 8)
+    else:
+        marker = (
+            '<div style="width:13px;height:13px;background:#999;'
+            'border:2px solid #555;border-radius:2px;'
             'box-shadow:0 0 2px white;"></div>'
         )
         size, anchor = (17, 17), (8, 8)
@@ -498,19 +593,28 @@ def _marker_icon(severity: str) -> folium.DivIcon:
 
 
 def _popup(row: pd.Series) -> str:
-    date = row["date"].strftime("%d/%m/%Y") if pd.notna(row["date"]) else str(row["year"])
-    address = html.escape(str(row["address"])) if pd.notna(row["address"]) else "Non renseignée"
-    vehicles = html.escape(str(row["vehicle_types"])) if pd.notna(row["vehicle_types"]) else "Non renseignés"
-    time = html.escape(str(row["time"])) if pd.notna(row["time"]) else "heure inconnue"
+    date_value = row.get("date")
+    year = row.get("year", "année inconnue")
+    date = date_value.strftime("%d/%m/%Y") if pd.notna(date_value) else str(year)
+    address_value = row.get("address")
+    vehicle_value = row.get("vehicle_types")
+    time_value = row.get("time")
+    address = html.escape(str(address_value)) if pd.notna(address_value) else "Non renseignée"
+    vehicles = html.escape(str(vehicle_value)) if pd.notna(vehicle_value) else "Non renseignés"
+    time = html.escape(str(time_value)) if pd.notna(time_value) else "heure inconnue"
+    commune = html.escape(str(row.get("commune_code", "Non renseigné")))
+    killed = row.get("number_killed")
+    killed_text = str(int(killed)) if pd.notna(killed) else "Non renseigné"
+    accident_id = html.escape(str(row.get("accident_id", "Non renseigné")))
     return f"""
     <div style="font-family:Arial,sans-serif;font-size:13px;min-width:260px">
       <strong>{html.escape(str(row['severity']))}</strong><br>
       <b>Date :</b> {date}, {time}<br>
-      <b>Commune INSEE :</b> {html.escape(str(row['commune_code']))}<br>
+      <b>Commune INSEE :</b> {commune}<br>
       <b>Adresse :</b> {address}<br>
       <b>Véhicules :</b> {vehicles}<br>
-      <b>Personnes tuées :</b> {int(row['number_killed'])}<br>
-      <b>Identifiant :</b> {html.escape(str(row['accident_id']))}
+      <b>Personnes tuées :</b> {killed_text}<br>
+      <b>Identifiant :</b> {accident_id}
     </div>
     """
 
@@ -520,34 +624,25 @@ def plot_severity_map(
     *,
     output: str | Path | None = None,
     tiles: str = "CartoDB positron",
+    attr: str | None = None,
     cluster: bool = True,
     max_points: int | None = 20_000,
 ) -> folium.Map:
     """Crée une carte Folium des accidents géolocalisés et la retourne.
 
-    Les accidents mortels sont des étoiles rouges, les graves non mortels des
+    Les accidents mortels sont des étoiles rouges, ceux avec blessé hospitalisé des
     losanges orange et les légers des ronds jaunes. Si ``output`` est fourni,
     la carte est également enregistrée dans un fichier HTML.
     """
-    required = {
-        "accident_id",
-        "year",
-        "date",
-        "time",
-        "commune_code",
-        "address",
-        "latitude",
-        "longitude",
-        "severity",
-        "number_killed",
-        "vehicle_types",
-    }
+    required = {"latitude", "longitude", "severity"}
     _require_columns(dataframe, required)
     mapped = dataframe[
         dataframe["latitude"].notna() & dataframe["longitude"].notna()
     ].copy()
     if mapped.empty:
         raise ValueError("Aucun accident du DataFrame ne possède de coordonnées valides")
+    if max_points is not None and max_points < 1:
+        raise ValueError("`max_points` doit être positif ou None")
     if max_points is not None and len(mapped) > max_points:
         raise ValueError(
             f"La carte contiendrait {len(mapped):,} points. Filtrez les années/communes "
@@ -558,6 +653,7 @@ def plot_severity_map(
         location=[mapped["latitude"].median(), mapped["longitude"].median()],
         zoom_start=10,
         tiles=tiles,
+        attr=attr,
         control_scale=True,
         fade_animation=False,
         zoom_animation=False,
@@ -575,7 +671,11 @@ def plot_severity_map(
         folium.Marker(
             location=[row["latitude"], row["longitude"]],
             icon=_marker_icon(str(row["severity"])),
-            tooltip=f"{row['year']} — {row['commune_code']} — {row['severity']}",
+            tooltip=" — ".join(
+                str(value)
+                for value in (row.get("year"), row.get("commune_code"), row["severity"])
+                if pd.notna(value)
+            ),
             popup=folium.Popup(_popup(row), max_width=420),
         ).add_to(layer)
 
@@ -587,6 +687,26 @@ def plot_severity_map(
         padding=(20, 20),
     )
     folium.LayerControl(collapsed=False).add_to(accident_map)
+    legend = Element(
+        """
+        <div style="position:fixed;bottom:24px;left:24px;z-index:1000;
+          background:white;padding:10px 12px;border:1px solid #aaa;border-radius:5px;
+          font:13px Arial,sans-serif;box-shadow:0 1px 5px rgba(0,0,0,.2)">
+          <b>Gravité maximale de l'accident</b><br>
+          <span style="color:#d00000;font-size:19px">★</span> Mortel<br>
+          <span style="display:inline-block;width:10px;height:10px;background:#f28c00;
+            border:1px solid #8a4b00;transform:rotate(45deg);margin:0 5px 0 3px"></span>
+            Blessé hospitalisé<br>
+          <span style="display:inline-block;width:10px;height:10px;background:#ffd800;
+            border:1px solid #8f7900;border-radius:50%;margin-right:5px"></span> Léger<br>
+          <span style="display:inline-block;width:10px;height:10px;background:#6baed6;
+            border:1px solid #315b78;border-radius:50%;margin-right:5px"></span> Indemne seulement<br>
+          <span style="display:inline-block;width:10px;height:10px;background:#999;
+            border:1px solid #555;margin-right:5px"></span> Inconnue
+        </div>
+        """
+    )
+    accident_map.get_root().html.add_child(legend)
     if output is not None:
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
